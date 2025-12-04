@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Medication Shelf Tracker</title>
   <style>
     body {
@@ -459,11 +460,36 @@
       color: #fff;
     }
 
-    @media (max-width: 600px) {
-      .app-container {
-        padding: 16px;
+    /* PHONE / SMALL SCREEN */
+    @media (max-width: 768px) {
+      body {
+        padding: 10px;
       }
 
+      .app-container {
+        padding: 14px;
+        border-radius: 10px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+      }
+
+      /* Circle nav – big tap targets */
+      .nav-circles {
+        gap: 12px;
+      }
+
+      .nav-circle-btn {
+        width: 46%;
+        max-width: none;
+        height: 90px;
+        font-size: 12px;
+      }
+
+      .nav-circle-btn span.icon {
+        font-size: 20px;
+        margin-bottom: 2px;
+      }
+
+      /* Add form stacked */
       .add-form {
         flex-direction: column;
         align-items: stretch;
@@ -474,6 +500,51 @@
       .add-form button,
       .add-form .barcode-group {
         width: 100%;
+      }
+
+      .add-form button {
+        width: 100%;
+        text-align: center;
+      }
+
+      /* Cards full width */
+      .med-list {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .med-card {
+        border-radius: 10px;
+      }
+
+      /* Tables: scroll if too wide */
+      #inventoryContent,
+      #expiringContent,
+      #orderContent {
+        overflow-x: auto;
+      }
+
+      table.inventory-table,
+      table.expiring-table {
+        min-width: 500px;
+        font-size: 13px;
+      }
+
+      /* Order card full width */
+      .order-card {
+        max-width: 100%;
+      }
+
+      /* Overlays fit small screens */
+      .overlay-inner {
+        max-width: 100%;
+        width: 96%;
+        padding: 12px;
+      }
+
+      .scanner-viewport {
+        height: 220px;
       }
     }
   </style>
@@ -572,7 +643,7 @@
       </div>
       <div id="scannerViewport" class="scanner-viewport"></div>
       <div class="overlay-helper">
-        Point the iPad camera at the barcode.
+        Point the iPad/phone camera at the barcode.
       </div>
     </div>
   </div>
@@ -843,7 +914,6 @@
           if (!med.exp) return null;
           const d = new Date(med.exp);
           if (isNaN(d.getTime())) return null;
-          // only future (or today) and within 3 months
           if (d < now || d > threshold) return null;
           const daysLeft = Math.floor((d - now) / (1000 * 60 * 60 * 24));
           return { ...med, expDate: d, daysLeft };
@@ -1190,7 +1260,6 @@
       if (scannerMode === "add") {
         const existing = medications.find(m => m.barcode === code);
         if (existing) {
-          // Item already in inventory: show adjust for that item
           stopScanner();
           showAdjustModal(existing, code);
           return;
