@@ -287,14 +287,16 @@
       text-decoration: underline;
     }
 
-    /* Inventory table */
-    .inventory-summary {
+    /* Inventory & Expiring tables */
+    .inventory-summary,
+    .expiring-summary {
       font-size: 13px;
       color: #4b5563;
       margin-bottom: 8px;
     }
 
-    table.inventory-table {
+    table.inventory-table,
+    table.expiring-table {
       width: 100%;
       border-collapse: collapse;
       font-size: 14px;
@@ -302,18 +304,22 @@
     }
 
     table.inventory-table th,
-    table.inventory-table td {
+    table.inventory-table td,
+    table.expiring-table th,
+    table.expiring-table td {
       border: 1px solid #e5e7eb;
       padding: 8px;
       text-align: left;
     }
 
-    table.inventory-table th {
+    table.inventory-table th,
+    table.expiring-table th {
       background: #f3f4f6;
       font-weight: 600;
     }
 
-    table.inventory-table tbody tr:nth-child(even) {
+    table.inventory-table tbody tr:nth-child(even),
+    table.expiring-table tbody tr:nth-child(even) {
       background: #f9fafb;
     }
 
@@ -489,6 +495,10 @@
         <span class="icon">📋</span>
         Inventory
       </button>
+      <button class="nav-circle-btn" data-target="expiringTab">
+        <span class="icon">⏰</span>
+        Expiring
+      </button>
       <button class="nav-circle-btn" data-target="ordersTab">
         <span class="icon">🧾</span>
         Orders
@@ -526,7 +536,15 @@
       <div id="inventoryContent"></div>
     </div>
 
-    <!-- TAB 3: Orders View -->
+    <!-- TAB 3: Expiring (within 3 months) -->
+    <div id="expiringTab" class="tab-panel">
+      <div class="expiring-summary">
+        Medications with expiration dates within the next <strong>3 months</strong>.
+      </div>
+      <div id="expiringContent"></div>
+    </div>
+
+    <!-- TAB 4: Orders View -->
     <div id="ordersTab" class="tab-panel">
       <div class="add-form" style="margin-bottom: 16px;">
         <select id="orderMedSelect">
@@ -559,7 +577,7 @@
     </div>
   </div>
 
-  <!-- Adjust Modal (after barcode scan for adjust) -->
+  <!-- Adjust Modal (after barcode scan for adjust or existing item) -->
   <div id="adjustModal" class="overlay-modal">
     <div class="overlay-inner">
       <div class="overlay-header">
@@ -640,6 +658,7 @@
     const medBarcodeInput = document.getElementById("medBarcodeInput");
     const addMedBtn = document.getElementById("addMedBtn");
     const inventoryContent = document.getElementById("inventoryContent");
+    const expiringContent = document.getElementById("expiringContent");
 
     const orderMedSelect = document.getElementById("orderMedSelect");
     const orderQtyInput = document.getElementById("orderQtyInput");
@@ -712,6 +731,7 @@
           qtyDisplay.textContent = med.qty;
           saveMeds(medications);
           renderInventory();
+          renderExpiring();
           renderOrderSelectOptions();
         });
 
@@ -722,6 +742,7 @@
           qtyDisplay.textContent = med.qty;
           saveMeds(medications);
           renderInventory();
+          renderExpiring();
           renderOrderSelectOptions();
         });
 
@@ -735,6 +756,7 @@
 
             renderMeds();
             renderInventory();
+            renderExpiring();
             renderOrders();
             renderOrderSelectOptions();
           }
@@ -752,6 +774,7 @@
           expSpan.textContent = trimmed || "Not set";
           saveMeds(medications);
           renderInventory();
+          renderExpiring();
         });
 
         medListEl.appendChild(card);
@@ -809,6 +832,66 @@
       inventoryContent.innerHTML = html;
     }
 
+    // ---------- Expiring within 3 months ----------
+    function renderExpiring() {
+      const now = new Date();
+      const threshold = new Date(now.getTime());
+      threshold.setMonth(threshold.getMonth() + 3);
+
+      const expiring = medications
+        .map(med => {
+          if (!med.exp) return null;
+          const d = new Date(med.exp);
+          if (isNaN(d.getTime())) return null;
+          // only future (or today) and within 3 months
+          if (d < now || d > threshold) return null;
+          const daysLeft = Math.floor((d - now) / (1000 * 60 * 60 * 24));
+          return { ...med, expDate: d, daysLeft };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.expDate - b.expDate);
+
+      if (!expiring.length) {
+        expiringContent.innerHTML = "<p>No medications expiring within 3 months.</p>";
+        return;
+      }
+
+      let html = `
+        <table class="expiring-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Medication Name</th>
+              <th>Expiration</th>
+              <th>Days Left</th>
+              <th>Barcode</th>
+              <th class="text-right">On Shelf</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+
+      expiring.forEach((med, index) => {
+        html += `
+          <tr>
+            <td>${index + 1}</td>
+            <td>${med.name}</td>
+            <td>${med.exp}</td>
+            <td>${med.daysLeft}</td>
+            <td>${med.barcode || ""}</td>
+            <td class="text-right">${med.qty}</td>
+          </tr>
+        `;
+      });
+
+      html += `
+          </tbody>
+        </table>
+      `;
+
+      expiringContent.innerHTML = html;
+    }
+
     // ---------- Orders ----------
     function renderOrderSelectOptions() {
       const currentValue = orderMedSelect.value;
@@ -859,8 +942,7 @@
           <strong>Expiration:</strong> ${med.exp || "Not set"}
         </div>
         <div class="order-line">
-          <strong>On shelf now:</strong> ${med.qty}
-        </div>
+          <strong>On shelf now:</strong> ${med.qty}</div>
         <div class="order-line">
           Remaining orders in queue: <strong>${orders.length}</strong>
         </div>
@@ -891,6 +973,7 @@
 
         renderMeds();
         renderInventory();
+        renderExpiring();
         renderOrders();
       });
 
@@ -938,6 +1021,75 @@
       orderQtyInput.value = "";
     });
 
+    // ---------- Adjust Modal ----------
+    function showAdjustModal(med, code) {
+      adjustMedId = med.id;
+      adjustAmountInput.value = "1";
+      adjustInfo.innerHTML =
+        `<div style="margin-bottom:4px;">Medication: <strong>${med.name}</strong></div>
+         <div style="margin-bottom:4px;">Barcode: <strong>${code || med.barcode}</strong></div>
+         <div>On shelf now: <strong>${med.qty}</strong></div>`;
+      adjustModal.classList.add("active");
+    }
+
+    function closeAdjustModal() {
+      adjustMedId = null;
+      adjustModal.classList.remove("active");
+    }
+
+    adjustSubtractBtn.addEventListener("click", () => {
+      let amt = parseInt(adjustAmountInput.value, 10);
+      if (isNaN(amt) || amt <= 0) {
+        alert("Enter a valid amount.");
+        return;
+      }
+      const med = medications.find(m => m.id === adjustMedId);
+      if (!med) {
+        alert("Medication not found.");
+        closeAdjustModal();
+        return;
+      }
+      if (med.qty < amt) {
+        alert(`Not enough on shelf.\nOn shelf: ${med.qty}\nRequested: ${amt}`);
+        return;
+      }
+      med.qty -= amt;
+      saveMeds(medications);
+      renderMeds();
+      renderInventory();
+      renderExpiring();
+      renderOrders();
+      closeAdjustModal();
+    });
+
+    adjustAddBtn.addEventListener("click", () => {
+      let amt = parseInt(adjustAmountInput.value, 10);
+      if (isNaN(amt) || amt <= 0) {
+        alert("Enter a valid amount.");
+        return;
+      }
+      const med = medications.find(m => m.id === adjustMedId);
+      if (!med) {
+        alert("Medication not found.");
+        closeAdjustModal();
+        return;
+      }
+      med.qty += amt;
+      saveMeds(medications);
+      renderMeds();
+      renderInventory();
+      renderExpiring();
+      renderOrders();
+      closeAdjustModal();
+    });
+
+    closeAdjustBtn.addEventListener("click", closeAdjustModal);
+    adjustModal.addEventListener("click", e => {
+      if (e.target === adjustModal) {
+        closeAdjustModal();
+      }
+    });
+
     // ---------- Add medication ----------
     addMedBtn.addEventListener("click", () => {
       const name = medNameInput.value.trim();
@@ -953,9 +1105,15 @@
         alert("Each item must have a barcode. Please scan or enter one.");
         return;
       }
-      // prevent duplicate barcodes
-      if (medications.some(m => m.barcode === barcode)) {
-        alert("This barcode is already assigned to another medication.");
+
+      const existing = medications.find(m => m.barcode === barcode);
+      if (existing) {
+        // If barcode already exists, show the adjust modal instead of adding a new med
+        showAdjustModal(existing, barcode);
+        medBarcodeInput.value = "";
+        medStartQtyInput.value = "";
+        medNameInput.value = "";
+        medExpInput.value = "";
         return;
       }
 
@@ -973,6 +1131,7 @@
       saveMeds(medications);
       renderMeds();
       renderInventory();
+      renderExpiring();
       renderOrderSelectOptions();
 
       medNameInput.value = "";
@@ -1029,6 +1188,14 @@
       const code = result.codeResult.code;
 
       if (scannerMode === "add") {
+        const existing = medications.find(m => m.barcode === code);
+        if (existing) {
+          // Item already in inventory: show adjust for that item
+          stopScanner();
+          showAdjustModal(existing, code);
+          return;
+        }
+        // New barcode: just fill the field so user can add as new med
         medBarcodeInput.value = code;
         stopScanner();
       } else if (scannerMode === "adjust") {
@@ -1066,73 +1233,6 @@
       }
     });
 
-    // ---------- Adjust Modal ----------
-    function showAdjustModal(med, code) {
-      adjustMedId = med.id;
-      adjustAmountInput.value = "1";
-      adjustInfo.innerHTML =
-        `<div style="margin-bottom:4px;">Scanned: <strong>${med.name}</strong></div>
-         <div style="margin-bottom:4px;">Barcode: <strong>${code}</strong></div>
-         <div>On shelf now: <strong>${med.qty}</strong></div>`;
-      adjustModal.classList.add("active");
-    }
-
-    function closeAdjustModal() {
-      adjustMedId = null;
-      adjustModal.classList.remove("active");
-    }
-
-    adjustSubtractBtn.addEventListener("click", () => {
-      let amt = parseInt(adjustAmountInput.value, 10);
-      if (isNaN(amt) || amt <= 0) {
-        alert("Enter a valid amount.");
-        return;
-      }
-      const med = medications.find(m => m.id === adjustMedId);
-      if (!med) {
-        alert("Medication not found.");
-        closeAdjustModal();
-        return;
-      }
-      if (med.qty < amt) {
-        alert(`Not enough on shelf.\nOn shelf: ${med.qty}\nRequested: ${amt}`);
-        return;
-      }
-      med.qty -= amt;
-      saveMeds(medications);
-      renderMeds();
-      renderInventory();
-      renderOrders();
-      closeAdjustModal();
-    });
-
-    adjustAddBtn.addEventListener("click", () => {
-      let amt = parseInt(adjustAmountInput.value, 10);
-      if (isNaN(amt) || amt <= 0) {
-        alert("Enter a valid amount.");
-        return;
-      }
-      const med = medications.find(m => m.id === adjustMedId);
-      if (!med) {
-        alert("Medication not found.");
-        closeAdjustModal();
-        return;
-      }
-      med.qty += amt;
-      saveMeds(medications);
-      renderMeds();
-      renderInventory();
-      renderOrders();
-      closeAdjustModal();
-    });
-
-    closeAdjustBtn.addEventListener("click", closeAdjustModal);
-    adjustModal.addEventListener("click", e => {
-      if (e.target === adjustModal) {
-        closeAdjustModal();
-      }
-    });
-
     // ---------- Circle navigation ----------
     const circleButtons = document.querySelectorAll(".nav-circle-btn");
     const panels = document.querySelectorAll(".tab-panel");
@@ -1151,6 +1251,8 @@
           renderInventory();
         } else if (target === "ordersTab") {
           renderOrders();
+        } else if (target === "expiringTab") {
+          renderExpiring();
         }
       });
     });
@@ -1158,6 +1260,7 @@
     // ---------- Initial render ----------
     renderMeds();
     renderInventory();
+    renderExpiring();
     renderOrderSelectOptions();
     renderOrders();
   </script>
