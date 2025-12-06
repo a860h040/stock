@@ -472,7 +472,6 @@
         box-shadow: 0 4px 12px rgba(0,0,0,0.05);
       }
 
-      /* Circle nav – big tap targets */
       .nav-circles {
         gap: 12px;
       }
@@ -489,7 +488,6 @@
         margin-bottom: 2px;
       }
 
-      /* Add form stacked */
       .add-form {
         flex-direction: column;
         align-items: stretch;
@@ -507,7 +505,6 @@
         text-align: center;
       }
 
-      /* Cards full width */
       .med-list {
         display: flex;
         flex-direction: column;
@@ -518,7 +515,6 @@
         border-radius: 10px;
       }
 
-      /* Tables: scroll if too wide */
       #inventoryContent,
       #expiringContent,
       #orderContent {
@@ -531,12 +527,10 @@
         font-size: 13px;
       }
 
-      /* Order card full width */
       .order-card {
         max-width: 100%;
       }
 
-      /* Overlays fit small screens */
       .overlay-inner {
         max-width: 100%;
         width: 96%;
@@ -589,7 +583,6 @@
         <button id="addMedBtn">Add Medication</button>
       </div>
 
-      <!-- Scan to adjust stock -->
       <div style="margin-bottom:14px;">
         <button type="button" class="scan-btn" id="openAdjustScanBtn">
           Scan to Adjust Stock
@@ -648,7 +641,7 @@
     </div>
   </div>
 
-  <!-- Adjust Modal (after barcode scan for adjust or existing item) -->
+  <!-- Adjust Modal -->
   <div id="adjustModal" class="overlay-modal">
     <div class="overlay-inner">
       <div class="overlay-header">
@@ -670,128 +663,50 @@
     </div>
   </div>
 
-  <!-- Barcode library (QuaggaJS) -->
+  <!-- Barcode library -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
 
   <script>
-    // ---------- GITHUB CONFIG ----------
-    const GITHUB_CONFIG = {
-      owner: "a860h040",
-      repo: "stock",
-      path: "medications.json",
-      branch: "main",
-      // ⚠️ Put your fine-grained token here:
-      token: "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"
-    };
+    // --------- BACKEND CONFIG (Google Apps Script) ----------
+    const API_URL = "https://script.google.com/macros/s/AKfycbwjnbeHfU0SH1GB9Y7aCV3q76FIPcOUiWDMjHuDn4fnOM1Tc3Ru8IZXL6yCluuO7aJ5NA/exec"; // <- paste your /exec URL here
 
-    function githubEnabled() {
-      return (
-        GITHUB_CONFIG.owner &&
-        GITHUB_CONFIG.repo &&
-        GITHUB_CONFIG.path &&
-        GITHUB_CONFIG.token &&
-        GITHUB_CONFIG.token !== "YOUR_GITHUB_TOKEN_HERE"
-      );
-    }
-
-    function encodeToBase64(str) {
-      return btoa(unescape(encodeURIComponent(str)));
-    }
-
-    function decodeFromBase64(b64) {
-      return decodeURIComponent(escape(atob(b64)));
-    }
-
-    async function githubGetFile() {
-      if (!githubEnabled()) return null;
-
-      const { owner, repo, path, branch, token } = GITHUB_CONFIG;
-      const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}?ref=${branch}`;
-
-      const res = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/vnd.github+json"
+    async function backendLoadMeds() {
+      if (!API_URL) return null;
+      try {
+        const res = await fetch(API_URL);
+        if (!res.ok) {
+          console.error("Backend load failed:", res.status, await res.text());
+          return null;
         }
-      });
-
-      if (res.status === 404) return null;
-      if (!res.ok) {
-        console.error("GitHub get error:", res.status, await res.text());
-        return null;
-      }
-
-      return res.json();
-    }
-
-    async function githubSaveMeds(minimalMeds) {
-      if (!githubEnabled()) return;
-
-      const { owner, repo, path, branch, token } = GITHUB_CONFIG;
-      const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}`;
-
-      let sha = undefined;
-      try {
-        const existing = await githubGetFile();
-        if (existing && existing.sha) sha = existing.sha;
-      } catch (e) {
-        console.warn("GitHub get before save failed:", e);
-      }
-
-      const jsonText = JSON.stringify(minimalMeds, null, 2);
-      const content = encodeToBase64(jsonText);
-
-      const body = {
-        message: "Update medications from Medication Shelf Tracker",
-        content,
-        branch,
-        sha
-      };
-
-      const res = await fetch(url, {
-        method: "PUT",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: "application/vnd.github+json",
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(body)
-      });
-
-      if (!res.ok) {
-        console.error("GitHub save failed", res.status, await res.text());
-      }
-    }
-
-    async function githubLoadMeds() {
-      const file = await githubGetFile();
-      if (!file || !file.content) return null;
-
-      try {
-        const text = decodeFromBase64(file.content);
-        const data = JSON.parse(text);
+        const data = await res.json();
         if (!Array.isArray(data)) return null;
-
-        const base = Date.now();
-        return data
-          .map((m, i) => ({
-            id: base + i,
-            name: (m.name || "").trim(),
-            qty: Number(m.qty) || 0,
-            exp: m.exp || "",
-            barcode: (m.barcode || "").trim()
-          }))
-          .filter(m => m.name && m.barcode);
+        return data;
       } catch (e) {
-        console.error("Failed to parse meds from GitHub:", e);
+        console.error("Backend load error:", e);
         return null;
+      }
+    }
+
+    async function backendSaveMeds(minimalMeds) {
+      if (!API_URL) return;
+      try {
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(minimalMeds)
+        });
+        if (!res.ok) {
+          console.error("Backend save failed:", res.status, await res.text());
+        }
+      } catch (e) {
+        console.error("Backend save error:", e);
       }
     }
 
     const STORAGE_KEY = "medShelfTrackerData";
     const ORDER_STORAGE_KEY = "medShelfOrdersData";
 
-    function loadMeds() {
+    function loadMedsLocal() {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         try {
@@ -811,10 +726,8 @@
     }
 
     function saveMeds(meds) {
-      // local copy
       localStorage.setItem(STORAGE_KEY, JSON.stringify(meds));
 
-      // push minimal copy to GitHub
       const minimal = meds.map(m => ({
         name: m.name,
         qty: m.qty ?? 0,
@@ -822,9 +735,7 @@
         barcode: m.barcode || ""
       }));
 
-      githubSaveMeds(minimal).catch(err => {
-        console.error("GitHub meds save error:", err);
-      });
+      backendSaveMeds(minimal);
     }
 
     function loadOrders() {
@@ -874,10 +785,9 @@
     const closeAdjustBtn = document.getElementById("closeAdjustBtn");
 
     let scannerActive = false;
-    let scannerMode = "add"; // "add" or "adjust"
+    let scannerMode = "add";
     let adjustMedId = null;
 
-    // ---------- Shelf ----------
     function renderMeds() {
       medListEl.innerHTML = "";
 
@@ -976,7 +886,6 @@
       });
     }
 
-    // ---------- Inventory ----------
     function renderInventory() {
       if (!medications.length) {
         inventoryContent.innerHTML = "<p>No medications in inventory.</p>";
@@ -1027,7 +936,6 @@
       inventoryContent.innerHTML = html;
     }
 
-    // ---------- Expiring within 3 months ----------
     function renderExpiring() {
       const now = new Date();
       const threshold = new Date(now.getTime());
@@ -1086,7 +994,6 @@
       expiringContent.innerHTML = html;
     }
 
-    // ---------- Orders ----------
     function renderOrderSelectOptions() {
       const currentValue = orderMedSelect.value;
       orderMedSelect.innerHTML = '<option value="">Select medication for order...</option>';
@@ -1181,41 +1088,6 @@
       });
     }
 
-    addOrderBtn.addEventListener("click", () => {
-      const medIdStr = orderMedSelect.value;
-      let qty = parseInt(orderQtyInput.value, 10);
-
-      if (!medIdStr) {
-        alert("Please select a medication for the order.");
-        return;
-      }
-      if (isNaN(qty) || qty <= 0) {
-        alert("Please enter a valid order quantity.");
-        return;
-      }
-
-      const medId = Number(medIdStr);
-      const med = medications.find(m => m.id === medId);
-      if (!med) {
-        alert("Selected medication no longer exists.");
-        renderOrderSelectOptions();
-        return;
-      }
-
-      const newOrder = {
-        id: Date.now(),
-        medId: med.id,
-        qty
-      };
-
-      orders.push(newOrder);
-      saveOrders(orders);
-      renderOrders();
-
-      orderQtyInput.value = "";
-    });
-
-    // ---------- Adjust Modal ----------
     function showAdjustModal(med, code) {
       adjustMedId = med.id;
       adjustAmountInput.value = "1";
@@ -1284,7 +1156,6 @@
       }
     });
 
-    // ---------- Add medication ----------
     addMedBtn.addEventListener("click", () => {
       const name = medNameInput.value.trim();
       let qty = parseInt(medStartQtyInput.value, 10);
@@ -1340,7 +1211,6 @@
       if (e.key === "Enter") addMedBtn.click();
     });
 
-    // ---------- Barcode Scanner ----------
     function startScanner(mode) {
       if (!window.Quagga) {
         alert("Barcode scanner library not loaded.");
@@ -1424,7 +1294,6 @@
       }
     });
 
-    // ---------- Circle navigation ----------
     const circleButtons = document.querySelectorAll(".nav-circle-btn");
     const panels = document.querySelectorAll(".tab-panel");
 
@@ -1448,21 +1317,27 @@
       });
     });
 
-    // ---------- Init: load from local + GitHub ----------
     async function initApp() {
-      medications = loadMeds();
+      medications = loadMedsLocal();
       orders = loadOrders();
 
       try {
-        if (githubEnabled()) {
-          const remoteMeds = await githubLoadMeds();
-          if (remoteMeds && remoteMeds.length > 0) {
-            medications = remoteMeds;
-            saveMeds(medications); // refresh local copy
-          }
+        const remoteMeds = await backendLoadMeds();
+        if (remoteMeds && remoteMeds.length >= 0) {
+          const base = Date.now();
+          medications = remoteMeds
+            .map((m, i) => ({
+              id: base + i,
+              name: (m.name || "").trim(),
+              qty: Number(m.qty) || 0,
+              exp: m.exp || "",
+              barcode: (m.barcode || "").trim()
+            }))
+            .filter(m => m.name && m.barcode);
+          saveMeds(medications);
         }
       } catch (e) {
-        console.error("GitHub load failed, using local only:", e);
+        console.error("Backend load failed, using local only:", e);
       }
 
       renderMeds();
