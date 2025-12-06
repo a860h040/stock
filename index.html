@@ -664,25 +664,26 @@
     </div>
   </div>
 
-  <!-- QuaggaJS -->
+  <!-- Barcode library -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
 
   <script>
-    // 🔗 REPLACE with your Apps Script Web App URL (ends with /exec)
-    const API_URL = "https://script.google.com/macros/s/AKfycbyKn9WPlucEpI4xzELs37-95VNKSfTVYCve1xpHGbKp_VC4FAdAqm2nTr11nWeUur1gcg/exec";
+    // ====== GOOGLE APPS SCRIPT WEB APP URL ======
+    const API_URL = "https://script.google.com/macros/s/AKfycby84DRy6BQRMUR6nMni900gb4G1F3yCUDptFUzzUbkPqdb0wtwBZO_culCX8tcKZopoKg/exec";
 
+    // ====== LOCAL STORAGE KEYS ======
     const STORAGE_KEY = "medShelfTrackerData";
     const ORDER_STORAGE_KEY = "medShelfOrdersData";
 
-    // ---- Local storage helpers ----
-    function loadLocalMeds() {
+    // ====== LOCAL STORAGE HELPERS ======
+    function loadMedsLocal() {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (!saved) return [];
       try {
         const meds = JSON.parse(saved);
         return meds.map(m => ({
-          id: m.id ?? (Date.now() + Math.random()),
-          name: m.name || "",
+          id: m.id,
+          name: m.name,
           qty: m.qty ?? 0,
           exp: m.exp || "",
           barcode: m.barcode || ""
@@ -693,7 +694,7 @@
       }
     }
 
-    function saveLocalMeds(meds) {
+    function saveMedsLocal(meds) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(meds));
     }
 
@@ -712,70 +713,62 @@
       localStorage.setItem(ORDER_STORAGE_KEY, JSON.stringify(orders));
     }
 
-    // ---- Server sync helpers ----
-    async function loadMedsFromServer() {
-      if (!API_URL || API_URL === "YOUR_WEB_APP_URL_HERE") return null;
-
-      const res = await fetch(API_URL, {
-        method: "GET"
-      });
-
-      if (!res.ok) {
-        console.error("Server GET failed:", res.status, await res.text());
+    // ====== SERVER SYNC HELPERS ======
+    async function fetchMedsFromServer() {
+      try {
+        const res = await fetch(API_URL, {
+          method: "GET"
+        });
+        if (!res.ok) {
+          console.error("GET meds failed:", res.status, await res.text());
+          return null;
+        }
+        const data = await res.json();
+        if (!Array.isArray(data)) return null;
+        return data;
+      } catch (e) {
+        console.error("GET meds error:", e);
         return null;
       }
-
-      const data = await res.json();
-      if (!Array.isArray(data)) return null;
-
-      const base = Date.now();
-      return data
-        .map((m, i) => ({
-          id: base + i,
-          name: (m.name || "").trim(),
-          qty: Number(m.qty) || 0,
-          exp: m.exp || "",
-          barcode: (m.barcode || "").trim()
-        }))
-        .filter(m => m.name && m.barcode);
     }
 
     async function syncMedsToServer(meds) {
-      if (!API_URL || API_URL === "YOUR_WEB_APP_URL_HERE") return;
-
-      const minimal = meds.map(m => ({
-        name: m.name,
-        qty: m.qty ?? 0,
-        exp: m.exp || "",
-        barcode: m.barcode || ""
-      }));
-
-      const res = await fetch(API_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
+      try {
+        const payload = {
           action: "syncAll",
-          meds: minimal
-        })
-      });
+          meds: meds.map(m => ({
+            name: m.name,
+            qty: m.qty ?? 0,
+            exp: m.exp || "",
+            barcode: m.barcode || ""
+          }))
+        };
 
-      if (!res.ok) {
-        console.error("Server POST failed:", res.status, await res.text());
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        console.log("Sync result:", data);
+      } catch (e) {
+        console.error("POST meds error:", e);
       }
     }
 
-    // Save meds → local + server
     function saveMeds(meds) {
-      saveLocalMeds(meds);
+      // Save locally
+      saveMedsLocal(meds);
+      // Sync to Google Sheet
       syncMedsToServer(meds).catch(err => console.error("Sync error:", err));
     }
 
-    // ---- State ----
+    // ====== APP STATE ======
     let medications = [];
     let orders = [];
 
+    // ====== DOM ELEMENTS ======
     const medListEl = document.getElementById("medList");
     const medNameInput = document.getElementById("medNameInput");
     const medStartQtyInput = document.getElementById("medStartQtyInput");
@@ -807,7 +800,7 @@
     let scannerMode = "add"; // "add" or "adjust"
     let adjustMedId = null;
 
-    // ---------- Shelf ----------
+    // ====== RENDER: SHELF ======
     function renderMeds() {
       medListEl.innerHTML = "";
 
@@ -906,7 +899,7 @@
       });
     }
 
-    // ---------- Inventory ----------
+    // ====== RENDER: INVENTORY ======
     function renderInventory() {
       if (!medications.length) {
         inventoryContent.innerHTML = "<p>No medications in inventory.</p>";
@@ -957,7 +950,7 @@
       inventoryContent.innerHTML = html;
     }
 
-    // ---------- Expiring within 3 months ----------
+    // ====== RENDER: EXPIRING ======
     function renderExpiring() {
       const now = new Date();
       const threshold = new Date(now.getTime());
@@ -1016,7 +1009,7 @@
       expiringContent.innerHTML = html;
     }
 
-    // ---------- Orders ----------
+    // ====== RENDER: ORDERS ======
     function renderOrderSelectOptions() {
       const currentValue = orderMedSelect.value;
       orderMedSelect.innerHTML = '<option value="">Select medication for order...</option>';
@@ -1063,8 +1056,7 @@
           <strong>Order:</strong> Take <strong>${current.qty}</strong> from the shelf.
         </div>
         <div class="order-line">
-          <strong>Expiration:</strong> ${med.exp || "Not set"}
-        </div>
+          <strong>Expiration:</strong> ${med.exp || "Not set"}</div>
         <div class="order-line">
           <strong>On shelf now:</strong> ${med.qty}</div>
         <div class="order-line">
@@ -1145,7 +1137,7 @@
       orderQtyInput.value = "";
     });
 
-    // ---------- Adjust Modal ----------
+    // ====== ADJUST MODAL ======
     function showAdjustModal(med, code) {
       adjustMedId = med.id;
       adjustAmountInput.value = "1";
@@ -1214,63 +1206,7 @@
       }
     });
 
-    // ---------- Add medication ----------
-    addMedBtn.addEventListener("click", () => {
-      const name = medNameInput.value.trim();
-      let qty = parseInt(medStartQtyInput.value, 10);
-      const exp = medExpInput.value.trim();
-      const barcode = medBarcodeInput.value.trim();
-
-      if (!name) {
-        alert("Please enter a medication name.");
-        return;
-      }
-      if (!barcode) {
-        alert("Each item must have a barcode. Please scan or enter one.");
-        return;
-      }
-
-      const existing = medications.find(m => m.barcode === barcode);
-      if (existing) {
-        showAdjustModal(existing, barcode);
-        medBarcodeInput.value = "";
-        medStartQtyInput.value = "";
-        medNameInput.value = "";
-        medExpInput.value = "";
-        return;
-      }
-
-      if (isNaN(qty) || qty < 0) qty = 0;
-
-      const newMed = {
-        id: Date.now(),
-        name,
-        qty,
-        exp,
-        barcode
-      };
-
-      medications.push(newMed);
-      saveMeds(medications);
-      renderMeds();
-      renderInventory();
-      renderExpiring();
-      renderOrderSelectOptions();
-
-      medNameInput.value = "";
-      medStartQtyInput.value = "";
-      medExpInput.value = "";
-      medBarcodeInput.value = "";
-    });
-
-    medNameInput.addEventListener("keydown", e => {
-      if (e.key === "Enter") addMedBtn.click();
-    });
-    medStartQtyInput.addEventListener("keydown", e => {
-      if (e.key === "Enter") addMedBtn.click();
-    });
-
-    // ---------- Barcode Scanner ----------
+    // ====== BARCODE SCANNER ======
     function startScanner(mode) {
       if (!window.Quagga) {
         alert("Barcode scanner library not loaded.");
@@ -1354,7 +1290,7 @@
       }
     });
 
-    // ---------- Circle navigation ----------
+    // ====== NAVIGATION ======
     const circleButtons = document.querySelectorAll(".nav-circle-btn");
     const panels = document.querySelectorAll(".tab-panel");
 
@@ -1378,20 +1314,84 @@
       });
     });
 
-    // ---------- Init ----------
+    // ====== ADD MED ======
+    addMedBtn.addEventListener("click", () => {
+      const name = medNameInput.value.trim();
+      let qty = parseInt(medStartQtyInput.value, 10);
+      const exp = medExpInput.value.trim();
+      const barcode = medBarcodeInput.value.trim();
+
+      if (!name) {
+        alert("Please enter a medication name.");
+        return;
+      }
+      if (!barcode) {
+        alert("Each item must have a barcode. Please scan or enter one.");
+        return;
+      }
+
+      const existing = medications.find(m => m.barcode === barcode);
+      if (existing) {
+        showAdjustModal(existing, barcode);
+        medBarcodeInput.value = "";
+        medStartQtyInput.value = "";
+        medNameInput.value = "";
+        medExpInput.value = "";
+        return;
+      }
+
+      if (isNaN(qty) || qty < 0) qty = 0;
+
+      const newMed = {
+        id: Date.now(),
+        name,
+        qty,
+        exp,
+        barcode
+      };
+
+      medications.push(newMed);
+      saveMeds(medications);
+      renderMeds();
+      renderInventory();
+      renderExpiring();
+      renderOrderSelectOptions();
+
+      medNameInput.value = "";
+      medStartQtyInput.value = "";
+      medExpInput.value = "";
+      medBarcodeInput.value = "";
+    });
+
+    medNameInput.addEventListener("keydown", e => {
+      if (e.key === "Enter") addMedBtn.click();
+    });
+    medStartQtyInput.addEventListener("keydown", e => {
+      if (e.key === "Enter") addMedBtn.click();
+    });
+
+    // ====== INIT APP ======
     async function initApp() {
-      medications = loadLocalMeds();
       orders = loadOrders();
 
-      try {
-        const remoteMeds = await loadMedsFromServer();
-        if (remoteMeds && remoteMeds.length > 0) {
-          medications = remoteMeds;
-          saveLocalMeds(medications); // keep local consistent
-        }
-      } catch (e) {
-        console.error("Server load failed, using local only:", e);
+      // Try server first
+      let loadedMeds = [];
+      const serverMeds = await fetchMedsFromServer();
+      if (serverMeds && serverMeds.length > 0) {
+        const base = Date.now();
+        loadedMeds = serverMeds.map((m, i) => ({
+          id: base + i,
+          name: (m.name || "").trim(),
+          qty: Number(m.qty) || 0,
+          exp: m.exp || "",
+          barcode: (m.barcode || "").trim()
+        })).filter(m => m.name && m.barcode);
+        saveMedsLocal(loadedMeds); // refresh local cache, don't re-sync here
+      } else {
+        loadedMeds = loadMedsLocal();
       }
+
+      medications = loadedMeds;
 
       renderMeds();
       renderInventory();
