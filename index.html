@@ -674,6 +674,120 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
 
   <script>
+    // ---------- GITHUB CONFIG ----------
+    const GITHUB_CONFIG = {
+      owner: "a860h040",
+      repo: "stock",
+      path: "medications.json",
+      branch: "main",
+      // ⚠️ Put your fine-grained token here:
+      token: "YOUR_GITHUB_TOKEN_HERE"
+    };
+
+    function githubEnabled() {
+      return (
+        GITHUB_CONFIG.owner &&
+        GITHUB_CONFIG.repo &&
+        GITHUB_CONFIG.path &&
+        GITHUB_CONFIG.token &&
+        GITHUB_CONFIG.token !== "YOUR_GITHUB_TOKEN_HERE"
+      );
+    }
+
+    function encodeToBase64(str) {
+      return btoa(unescape(encodeURIComponent(str)));
+    }
+
+    function decodeFromBase64(b64) {
+      return decodeURIComponent(escape(atob(b64)));
+    }
+
+    async function githubGetFile() {
+      if (!githubEnabled()) return null;
+
+      const { owner, repo, path, branch, token } = GITHUB_CONFIG;
+      const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}?ref=${branch}`;
+
+      const res = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github+json"
+        }
+      });
+
+      if (res.status === 404) return null;
+      if (!res.ok) {
+        console.error("GitHub get error:", res.status, await res.text());
+        return null;
+      }
+
+      return res.json();
+    }
+
+    async function githubSaveMeds(minimalMeds) {
+      if (!githubEnabled()) return;
+
+      const { owner, repo, path, branch, token } = GITHUB_CONFIG;
+      const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}`;
+
+      let sha = undefined;
+      try {
+        const existing = await githubGetFile();
+        if (existing && existing.sha) sha = existing.sha;
+      } catch (e) {
+        console.warn("GitHub get before save failed:", e);
+      }
+
+      const jsonText = JSON.stringify(minimalMeds, null, 2);
+      const content = encodeToBase64(jsonText);
+
+      const body = {
+        message: "Update medications from Medication Shelf Tracker",
+        content,
+        branch,
+        sha
+      };
+
+      const res = await fetch(url, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/vnd.github+json",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(body)
+      });
+
+      if (!res.ok) {
+        console.error("GitHub save failed", res.status, await res.text());
+      }
+    }
+
+    async function githubLoadMeds() {
+      const file = await githubGetFile();
+      if (!file || !file.content) return null;
+
+      try {
+        const text = decodeFromBase64(file.content);
+        const data = JSON.parse(text);
+        if (!Array.isArray(data)) return null;
+
+        const base = Date.now();
+        return data
+          .map((m, i) => ({
+            id: base + i,
+            name: (m.name || "").trim(),
+            qty: Number(m.qty) || 0,
+            exp: m.exp || "",
+            barcode: (m.barcode || "").trim()
+          }))
+          .filter(m => m.name && m.barcode);
+      } catch (e) {
+        console.error("Failed to parse meds from GitHub:", e);
+        return null;
+      }
+    }
+
     const STORAGE_KEY = "medShelfTrackerData";
     const ORDER_STORAGE_KEY = "medShelfOrdersData";
 
@@ -693,14 +807,24 @@
           console.error("Error parsing saved meds:", e);
         }
       }
-      return [
-        { id: Date.now(), name: "Amoxicillin 500 mg", qty: 30, exp: "", barcode: "111111" },
-        { id: Date.now() + 1, name: "Hydrochlorothiazide 25 mg", qty: 50, exp: "", barcode: "222222" }
-      ];
+      return [];
     }
 
     function saveMeds(meds) {
+      // local copy
       localStorage.setItem(STORAGE_KEY, JSON.stringify(meds));
+
+      // push minimal copy to GitHub
+      const minimal = meds.map(m => ({
+        name: m.name,
+        qty: m.qty ?? 0,
+        exp: m.exp || "",
+        barcode: m.barcode || ""
+      }));
+
+      githubSaveMeds(minimal).catch(err => {
+        console.error("GitHub meds save error:", err);
+      });
     }
 
     function loadOrders() {
@@ -719,8 +843,8 @@
       localStorage.setItem(ORDER_STORAGE_KEY, JSON.stringify(orders));
     }
 
-    let medications = loadMeds();
-    let orders = loadOrders();
+    let medications = [];
+    let orders = [];
 
     const medListEl = document.getElementById("medList");
     const medNameInput = document.getElementById("medNameInput");
@@ -1178,7 +1302,6 @@
 
       const existing = medications.find(m => m.barcode === barcode);
       if (existing) {
-        // If barcode already exists, show the adjust modal instead of adding a new med
         showAdjustModal(existing, barcode);
         medBarcodeInput.value = "";
         medStartQtyInput.value = "";
@@ -1264,7 +1387,6 @@
           showAdjustModal(existing, code);
           return;
         }
-        // New barcode: just fill the field so user can add as new med
         medBarcodeInput.value = code;
         stopScanner();
       } else if (scannerMode === "adjust") {
@@ -1326,12 +1448,31 @@
       });
     });
 
-    // ---------- Initial render ----------
-    renderMeds();
-    renderInventory();
-    renderExpiring();
-    renderOrderSelectOptions();
-    renderOrders();
+    // ---------- Init: load from local + GitHub ----------
+    async function initApp() {
+      medications = loadMeds();
+      orders = loadOrders();
+
+      try {
+        if (githubEnabled()) {
+          const remoteMeds = await githubLoadMeds();
+          if (remoteMeds && remoteMeds.length > 0) {
+            medications = remoteMeds;
+            saveMeds(medications); // refresh local copy
+          }
+        }
+      } catch (e) {
+        console.error("GitHub load failed, using local only:", e);
+      }
+
+      renderMeds();
+      renderInventory();
+      renderExpiring();
+      renderOrderSelectOptions();
+      renderOrders();
+    }
+
+    initApp();
   </script>
 </body>
 </html>
