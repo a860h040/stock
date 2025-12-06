@@ -583,6 +583,7 @@
         <button id="addMedBtn">Add Medication</button>
       </div>
 
+      <!-- Scan to adjust stock -->
       <div style="margin-bottom:14px;">
         <button type="button" class="scan-btn" id="openAdjustScanBtn">
           Scan to Adjust Stock
@@ -641,7 +642,7 @@
     </div>
   </div>
 
-  <!-- Adjust Modal -->
+  <!-- Adjust Modal (after barcode scan for adjust or existing item) -->
   <div id="adjustModal" class="overlay-modal">
     <div class="overlay-inner">
       <div class="overlay-header">
@@ -663,49 +664,18 @@
     </div>
   </div>
 
-  <!-- Barcode library -->
+  <!-- Barcode library (QuaggaJS) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
 
   <script>
-    // --------- BACKEND CONFIG (Google Apps Script) ----------
-    const API_URL = "https://script.google.com/macros/s/AKfycbzBm0ZmeoubDaIDGJrSrgvy0FrRpFO3LOO1cdZaLFn--4-hVdu-W9MQlt1XXKuY7xLvnQ/exec"; // <- paste your /exec URL here
-
-    async function backendLoadMeds() {
-      if (!API_URL) return null;
-      try {
-        const res = await fetch(API_URL);
-        if (!res.ok) {
-          console.error("Backend load failed:", res.status, await res.text());
-          return null;
-        }
-        const data = await res.json();
-        if (!Array.isArray(data)) return null;
-        return data;
-      } catch (e) {
-        console.error("Backend load error:", e);
-        return null;
-      }
-    }
-
-    async function backendSaveMeds(minimalMeds) {
-      if (!API_URL) return;
-      try {
-        const res = await fetch(API_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(minimalMeds)
-        });
-        if (!res.ok) {
-          console.error("Backend save failed:", res.status, await res.text());
-        }
-      } catch (e) {
-        console.error("Backend save error:", e);
-      }
-    }
+    // ---------- GOOGLE SHEETS API CONFIG ----------
+    // TODO: replace with your actual Apps Script web app URL
+    const API_URL = "https://script.google.com/macros/s/AKfycbxYpA8dXUFID4uhWlBpxs-TuQP7vZNcImd-kfnv0L73Rl9n8HSFPK-QSR4vOPUzsPzn3g/exec";
 
     const STORAGE_KEY = "medShelfTrackerData";
     const ORDER_STORAGE_KEY = "medShelfOrdersData";
 
+    // ---------- Helpers for local storage ----------
     function loadMedsLocal() {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
@@ -725,17 +695,8 @@
       return [];
     }
 
-    function saveMeds(meds) {
+    function saveMedsLocal(meds) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(meds));
-
-      const minimal = meds.map(m => ({
-        name: m.name,
-        qty: m.qty ?? 0,
-        exp: m.exp || "",
-        barcode: m.barcode || ""
-      }));
-
-      backendSaveMeds(minimal);
     }
 
     function loadOrders() {
@@ -754,6 +715,58 @@
       localStorage.setItem(ORDER_STORAGE_KEY, JSON.stringify(orders));
     }
 
+    // ---------- Server (Google Sheets) sync ----------
+    async function loadMedsFromServer() {
+      const res = await fetch(API_URL, { method: "GET" });
+      if (!res.ok) {
+        throw new Error("Server GET failed: " + res.status);
+      }
+      const data = await res.json();
+      if (!Array.isArray(data)) {
+        throw new Error("Invalid meds format from server");
+      }
+
+      const base = Date.now();
+      return data
+        .map((m, i) => ({
+          id: base + i,
+          name: String(m.name || "").trim(),
+          qty: Number(m.qty) || 0,
+          exp: m.exp || "",
+          barcode: String(m.barcode || "").trim()
+        }))
+        .filter(m => m.name && m.barcode);
+    }
+
+    async function pushMedsToServer(meds) {
+      const minimal = meds.map(m => ({
+        name: m.name,
+        qty: m.qty ?? 0,
+        exp: m.exp || "",
+        barcode: m.barcode || ""
+      }));
+
+      try {
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(minimal)
+        });
+        if (!res.ok) {
+          console.error("Server POST failed:", res.status, await res.text());
+        }
+      } catch (err) {
+        console.error("Error pushing meds to server:", err);
+      }
+    }
+
+    // Single function used everywhere in the UI
+    function saveMeds(meds) {
+      saveMedsLocal(meds);       // keep local copy
+      pushMedsToServer(meds);    // push to Google Sheet
+    }
+
+    // ---------- Global state ----------
     let medications = [];
     let orders = [];
 
@@ -785,9 +798,10 @@
     const closeAdjustBtn = document.getElementById("closeAdjustBtn");
 
     let scannerActive = false;
-    let scannerMode = "add";
+    let scannerMode = "add"; // "add" or "adjust"
     let adjustMedId = null;
 
+    // ---------- Shelf ----------
     function renderMeds() {
       medListEl.innerHTML = "";
 
@@ -886,6 +900,7 @@
       });
     }
 
+    // ---------- Inventory ----------
     function renderInventory() {
       if (!medications.length) {
         inventoryContent.innerHTML = "<p>No medications in inventory.</p>";
@@ -936,6 +951,7 @@
       inventoryContent.innerHTML = html;
     }
 
+    // ---------- Expiring within 3 months ----------
     function renderExpiring() {
       const now = new Date();
       const threshold = new Date(now.getTime());
@@ -994,6 +1010,7 @@
       expiringContent.innerHTML = html;
     }
 
+    // ---------- Orders ----------
     function renderOrderSelectOptions() {
       const currentValue = orderMedSelect.value;
       orderMedSelect.innerHTML = '<option value="">Select medication for order...</option>';
@@ -1040,8 +1057,7 @@
           <strong>Order:</strong> Take <strong>${current.qty}</strong> from the shelf.
         </div>
         <div class="order-line">
-          <strong>Expiration:</strong> ${med.exp || "Not set"}
-        </div>
+          <strong>Expiration:</strong> ${med.exp || "Not set"}</div>
         <div class="order-line">
           <strong>On shelf now:</strong> ${med.qty}</div>
         <div class="order-line">
@@ -1088,6 +1104,41 @@
       });
     }
 
+    addOrderBtn.addEventListener("click", () => {
+      const medIdStr = orderMedSelect.value;
+      let qty = parseInt(orderQtyInput.value, 10);
+
+      if (!medIdStr) {
+        alert("Please select a medication for the order.");
+        return;
+      }
+      if (isNaN(qty) || qty <= 0) {
+        alert("Please enter a valid order quantity.");
+        return;
+      }
+
+      const medId = Number(medIdStr);
+      const med = medications.find(m => m.id === medId);
+      if (!med) {
+        alert("Selected medication no longer exists.");
+        renderOrderSelectOptions();
+        return;
+      }
+
+      const newOrder = {
+        id: Date.now(),
+        medId: med.id,
+        qty
+      };
+
+      orders.push(newOrder);
+      saveOrders(orders);
+      renderOrders();
+
+      orderQtyInput.value = "";
+    });
+
+    // ---------- Adjust Modal ----------
     function showAdjustModal(med, code) {
       adjustMedId = med.id;
       adjustAmountInput.value = "1";
@@ -1156,6 +1207,7 @@
       }
     });
 
+    // ---------- Add medication ----------
     addMedBtn.addEventListener("click", () => {
       const name = medNameInput.value.trim();
       let qty = parseInt(medStartQtyInput.value, 10);
@@ -1211,6 +1263,7 @@
       if (e.key === "Enter") addMedBtn.click();
     });
 
+    // ---------- Barcode Scanner ----------
     function startScanner(mode) {
       if (!window.Quagga) {
         alert("Barcode scanner library not loaded.");
@@ -1220,28 +1273,31 @@
       scannerModal.classList.add("active");
       if (scannerActive) return;
 
-      Quagga.init({
-        inputStream: {
-          type: "LiveStream",
-          target: scannerViewport,
-          constraints: {
-            facingMode: "environment"
+      Quagga.init(
+        {
+          inputStream: {
+            type: "LiveStream",
+            target: scannerViewport,
+            constraints: {
+              facingMode: "environment"
+            }
+          },
+          decoder: {
+            readers: ["ean_reader", "upc_reader", "upc_e_reader", "code_128_reader"]
+          },
+          locate: true
+        },
+        function (err) {
+          if (err) {
+            console.error(err);
+            alert("Could not start camera. Check permissions.");
+            stopScanner();
+            return;
           }
-        },
-        decoder: {
-          readers: ["ean_reader", "upc_reader", "upc_e_reader", "code_128_reader"]
-        },
-        locate: true
-      }, function(err) {
-        if (err) {
-          console.error(err);
-          alert("Could not start camera. Check permissions.");
-          stopScanner();
-          return;
+          Quagga.start();
+          scannerActive = true;
         }
-        Quagga.start();
-        scannerActive = true;
-      });
+      );
 
       Quagga.onDetected(onDetectedHandler);
     }
@@ -1294,6 +1350,7 @@
       }
     });
 
+    // ---------- Circle navigation ----------
     const circleButtons = document.querySelectorAll(".nav-circle-btn");
     const panels = document.querySelectorAll(".tab-panel");
 
@@ -1317,27 +1374,21 @@
       });
     });
 
+    // ---------- Init: load from server, fall back to local ----------
     async function initApp() {
-      medications = loadMedsLocal();
       orders = loadOrders();
 
       try {
-        const remoteMeds = await backendLoadMeds();
-        if (remoteMeds && remoteMeds.length >= 0) {
-          const base = Date.now();
-          medications = remoteMeds
-            .map((m, i) => ({
-              id: base + i,
-              name: (m.name || "").trim(),
-              qty: Number(m.qty) || 0,
-              exp: m.exp || "",
-              barcode: (m.barcode || "").trim()
-            }))
-            .filter(m => m.name && m.barcode);
-          saveMeds(medications);
+        const remoteMeds = await loadMedsFromServer();
+        if (remoteMeds && remoteMeds.length > 0) {
+          medications = remoteMeds;
+          saveMedsLocal(medications);
+        } else {
+          medications = loadMedsLocal();
         }
       } catch (e) {
-        console.error("Backend load failed, using local only:", e);
+        console.error("Failed to load from server, using local only:", e);
+        medications = loadMedsLocal();
       }
 
       renderMeds();
