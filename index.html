@@ -642,7 +642,7 @@
     </div>
   </div>
 
-  <!-- Adjust Modal (after barcode scan for adjust or existing item) -->
+  <!-- Adjust Modal -->
   <div id="adjustModal" class="overlay-modal">
     <div class="overlay-inner">
       <div class="overlay-header">
@@ -664,81 +664,85 @@
     </div>
   </div>
 
-  <!-- Barcode library (QuaggaJS) -->
+  <!-- QuaggaJS -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
 
   <script>
-    // ---------- GOOGLE SHEETS API CONFIG ----------
-    // TODO: replace with your actual Apps Script web app URL
-    const API_URL = "https://script.google.com/macros/s/AKfycbxy-PgVBKqXmYHdBW4oC5XNQeLWK3oXU3I5MJuPd3s79wBLmJ3giEFRqH_hBkBz8_sv6Q/exec";
+    // 🔗 REPLACE with your Apps Script Web App URL (ends with /exec)
+    const API_URL = "https://script.google.com/macros/s/AKfycbyKn9WPlucEpI4xzELs37-95VNKSfTVYCve1xpHGbKp_VC4FAdAqm2nTr11nWeUur1gcg/exec";
 
     const STORAGE_KEY = "medShelfTrackerData";
     const ORDER_STORAGE_KEY = "medShelfOrdersData";
 
-    // ---------- Helpers for local storage ----------
-    function loadMedsLocal() {
+    // ---- Local storage helpers ----
+    function loadLocalMeds() {
       const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        try {
-          const meds = JSON.parse(saved);
-          return meds.map(m => ({
-            id: m.id,
-            name: m.name,
-            qty: m.qty ?? 0,
-            exp: m.exp || "",
-            barcode: m.barcode || ""
-          }));
-        } catch (e) {
-          console.error("Error parsing saved meds:", e);
-        }
+      if (!saved) return [];
+      try {
+        const meds = JSON.parse(saved);
+        return meds.map(m => ({
+          id: m.id ?? (Date.now() + Math.random()),
+          name: m.name || "",
+          qty: m.qty ?? 0,
+          exp: m.exp || "",
+          barcode: m.barcode || ""
+        }));
+      } catch (e) {
+        console.error("Error parsing local meds:", e);
+        return [];
       }
-      return [];
     }
 
-    function saveMedsLocal(meds) {
+    function saveLocalMeds(meds) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(meds));
     }
 
     function loadOrders() {
       const saved = localStorage.getItem(ORDER_STORAGE_KEY);
-      if (saved) {
-        try {
-          return JSON.parse(saved);
-        } catch (e) {
-          console.error("Error parsing orders:", e);
-        }
+      if (!saved) return [];
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error("Error parsing orders:", e);
+        return [];
       }
-      return [];
     }
 
     function saveOrders(orders) {
       localStorage.setItem(ORDER_STORAGE_KEY, JSON.stringify(orders));
     }
 
-    // ---------- Server (Google Sheets) sync ----------
+    // ---- Server sync helpers ----
     async function loadMedsFromServer() {
-      const res = await fetch(API_URL, { method: "GET" });
+      if (!API_URL || API_URL === "YOUR_WEB_APP_URL_HERE") return null;
+
+      const res = await fetch(API_URL, {
+        method: "GET"
+      });
+
       if (!res.ok) {
-        throw new Error("Server GET failed: " + res.status);
+        console.error("Server GET failed:", res.status, await res.text());
+        return null;
       }
+
       const data = await res.json();
-      if (!Array.isArray(data)) {
-        throw new Error("Invalid meds format from server");
-      }
+      if (!Array.isArray(data)) return null;
 
       const base = Date.now();
       return data
         .map((m, i) => ({
           id: base + i,
-          name: String(m.name || "").trim(),
+          name: (m.name || "").trim(),
           qty: Number(m.qty) || 0,
           exp: m.exp || "",
-          barcode: String(m.barcode || "").trim()
+          barcode: (m.barcode || "").trim()
         }))
         .filter(m => m.name && m.barcode);
     }
 
-    async function pushMedsToServer(meds) {
+    async function syncMedsToServer(meds) {
+      if (!API_URL || API_URL === "YOUR_WEB_APP_URL_HERE") return;
+
       const minimal = meds.map(m => ({
         name: m.name,
         qty: m.qty ?? 0,
@@ -746,27 +750,29 @@
         barcode: m.barcode || ""
       }));
 
-      try {
-        const res = await fetch(API_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(minimal)
-        });
-        if (!res.ok) {
-          console.error("Server POST failed:", res.status, await res.text());
-        }
-      } catch (err) {
-        console.error("Error pushing meds to server:", err);
+      const res = await fetch(API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          action: "syncAll",
+          meds: minimal
+        })
+      });
+
+      if (!res.ok) {
+        console.error("Server POST failed:", res.status, await res.text());
       }
     }
 
-    // Single function used everywhere in the UI
+    // Save meds → local + server
     function saveMeds(meds) {
-      saveMedsLocal(meds);       // keep local copy
-      pushMedsToServer(meds);    // push to Google Sheet
+      saveLocalMeds(meds);
+      syncMedsToServer(meds).catch(err => console.error("Sync error:", err));
     }
 
-    // ---------- Global state ----------
+    // ---- State ----
     let medications = [];
     let orders = [];
 
@@ -1057,7 +1063,8 @@
           <strong>Order:</strong> Take <strong>${current.qty}</strong> from the shelf.
         </div>
         <div class="order-line">
-          <strong>Expiration:</strong> ${med.exp || "Not set"}</div>
+          <strong>Expiration:</strong> ${med.exp || "Not set"}
+        </div>
         <div class="order-line">
           <strong>On shelf now:</strong> ${med.qty}</div>
         <div class="order-line">
@@ -1273,31 +1280,28 @@
       scannerModal.classList.add("active");
       if (scannerActive) return;
 
-      Quagga.init(
-        {
-          inputStream: {
-            type: "LiveStream",
-            target: scannerViewport,
-            constraints: {
-              facingMode: "environment"
-            }
-          },
-          decoder: {
-            readers: ["ean_reader", "upc_reader", "upc_e_reader", "code_128_reader"]
-          },
-          locate: true
-        },
-        function (err) {
-          if (err) {
-            console.error(err);
-            alert("Could not start camera. Check permissions.");
-            stopScanner();
-            return;
+      Quagga.init({
+        inputStream: {
+          type: "LiveStream",
+          target: scannerViewport,
+          constraints: {
+            facingMode: "environment"
           }
-          Quagga.start();
-          scannerActive = true;
+        },
+        decoder: {
+          readers: ["ean_reader", "upc_reader", "upc_e_reader", "code_128_reader"]
+        },
+        locate: true
+      }, function(err) {
+        if (err) {
+          console.error(err);
+          alert("Could not start camera. Check permissions.");
+          stopScanner();
+          return;
         }
-      );
+        Quagga.start();
+        scannerActive = true;
+      });
 
       Quagga.onDetected(onDetectedHandler);
     }
@@ -1374,21 +1378,19 @@
       });
     });
 
-    // ---------- Init: load from server, fall back to local ----------
+    // ---------- Init ----------
     async function initApp() {
+      medications = loadLocalMeds();
       orders = loadOrders();
 
       try {
         const remoteMeds = await loadMedsFromServer();
         if (remoteMeds && remoteMeds.length > 0) {
           medications = remoteMeds;
-          saveMedsLocal(medications);
-        } else {
-          medications = loadMedsLocal();
+          saveLocalMeds(medications); // keep local consistent
         }
       } catch (e) {
-        console.error("Failed to load from server, using local only:", e);
-        medications = loadMedsLocal();
+        console.error("Server load failed, using local only:", e);
       }
 
       renderMeds();
